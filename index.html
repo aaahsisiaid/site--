@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>写真・位置情報まとめサイト</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #fff; margin: 0; padding: 0; }
+  #map { height: 400px; width: 100%; }
+  #list { max-height: 400px; overflow-y: auto; padding: 10px; background: #f0f0f0; }
+  .item { border-bottom: 1px solid #ccc; padding: 5px; }
+  img { max-width: 100px; max-height: 75px; margin-right: 5px; vertical-align: middle; }
+  button { margin: 10px; padding: 10px 15px; font-size: 16px; cursor: pointer; }
+</style>
+
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+  import { getFirestore, collection, query, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDgwbExA5BKTcKsq2Ov8z173Ke6EPYGf28",
+    authDomain: "picture-storage-906ae.firebaseapp.com",
+    projectId: "picture-storage-906ae",
+    storageBucket: "picture-storage-906ae.firebasestorage.app",
+    messagingSenderId: "134265329367",
+    appId: "1:134265329367:web:b94063426b6307f8a8c292",
+    measurementId: "G-9CP3F27EMF"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  window.addEventListener('DOMContentLoaded', () => {
+    const listEl = document.getElementById("list");
+    const openCameraBtn = document.getElementById("openCamera");
+    let map, markers = [];
+
+    // Google Maps 初期化関数
+    window.initMap = function() {
+      map = new google.maps.Map(document.getElementById("map"), {
+        center: { lat: 35.0, lng: 135.0 },
+        zoom: 7
+      });
+    };
+
+    // Firestoreからリアルタイム取得して表示
+    const q = query(collection(db, "photos_with_location"), orderBy("createdAt", "desc"));
+    onSnapshot(q, (snapshot) => {
+      listEl.innerHTML = "";
+      // 既存マーカー削除
+      markers.forEach(m => m.setMap(null));
+      markers = [];
+
+      snapshot.forEach(doc => {
+        const data = doc.data();
+
+        // 日付と位置情報
+        const dateStr = new Date(data.createdAt).toLocaleString();
+        const loc = data.location || {};
+
+        // 写真をまとめてimgタグに変換（複数枚ある想定）
+        const photosHTML = [];
+        if(data.rearPhotos) {
+          data.rearPhotos.forEach((p,i) => photosHTML.push(`<img alt="rear${i+1}" src="${p}">`));
+        }
+        if(data.frontPhotos) {
+          data.frontPhotos.forEach((p,i) => photosHTML.push(`<img alt="front${i+1}" src="${p}">`));
+        }
+
+        const itemHTML = document.createElement("div");
+        itemHTML.className = "item";
+        itemHTML.innerHTML = `
+          <div><strong>${dateStr}</strong></div>
+          <div>緯度: ${loc.lat ?? "不明"}, 経度: ${loc.lon ?? "不明"}</div>
+          <div>${photosHTML.join('')}</div>
+        `;
+        listEl.appendChild(itemHTML);
+
+        // 地図にマーカー追加
+        if(loc.lat && loc.lon && !isNaN(loc.lat) && !isNaN(loc.lon)) {
+          const marker = new google.maps.Marker({
+            position: { lat: loc.lat, lng: loc.lon },
+            map: map,
+            title: dateStr
+          });
+          markers.push(marker);
+        }
+      });
+    });
+
+    // 撮影サイトを別タブで開くボタン動作
+    openCameraBtn.addEventListener("click", () => {
+      window.open("撮影サイトのURLをここに入れてください.html", "_blank");
+    });
+  });
+</script>
+
+<!-- Google Maps API 読み込み -->
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap">
+</script>
+
+</head>
+<body>
+  <h1>📷 写真・位置情報まとめサイト</h1>
+  <button id="openCamera">📸 撮影ページを開く</button>
+  <div id="map"></div>
+  <div id="list"></div>
+</body>
+</html>
