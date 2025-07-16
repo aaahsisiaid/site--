@@ -1,26 +1,58 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Firestore 写真＋位置情報一覧・地図表示</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📍 Firestore 地図 & 削除 + 写真プレビュー</title>
 <style>
-  body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
-  #list { max-height: 300px; overflow-y: auto; background: #eee; padding: 10px; }
-  .item { border-bottom: 1px solid #ccc; padding: 5px; }
-  .photos img { max-width: 100px; margin-right: 5px; }
-  #map { height: 400px; }
+  body { margin: 0; font-family: sans-serif; }
+  #map { height: 100vh; width: 100vw; }
+  #preview {
+    position: absolute;
+    top: 0; left: 0;
+    width: 66.6vw;
+    height: 100vh;
+    background: rgba(0,0,0,0.9);
+    color: white;
+    display: none;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    overflow-y: auto;
+    z-index: 999;
+    padding: 10px;
+  }
+  #preview img {
+    max-width: calc(50% - 10px);
+    margin: 5px;
+    border: 2px solid #fff;
+  }
+  #previewClose {
+    position: absolute;
+    top: 5px; right: 10px;
+    color: white;
+    font-size: 18px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+  }
+  .delete-button {
+    background: red;
+    color: white;
+    font-size: 12px;
+    border: none;
+    padding: 2px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
 </style>
-
-<!-- Leaflet CSS & JS -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
-  import { getFirestore, collection, query, orderBy, getDocs } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+  import {
+    getFirestore, collection, query, orderBy, getDocs, deleteDoc, doc
+  } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
-  // Firebase設定（ご自身の環境に変更してください）
   const firebaseConfig = {
     apiKey: "AIzaSyDgwbExA5BKTcKsq2Ov8z173Ke6EPYGf28",
     authDomain: "picture-storage-906ae.firebaseapp.com",
@@ -33,58 +65,79 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  window.onload = async () => {
-    const listEl = document.getElementById("list");
+  let map;
+  const markers = [];
 
-    // Firestoreコレクション参照・時間昇順で取得
-    const q = query(collection(db, "photos_with_location"), orderBy("createdAt", "asc"));
-    const snapshot = await getDocs(q);
+  async function loadData() {
+    const snapshot = await getDocs(query(collection(db, "photos_with_location"), orderBy("createdAt", "desc")));
+    const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    if (!map) {
+      map = L.map('map').setView([35.68, 139.76], 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+    }
 
-    // Leaflet地図初期化（初期位置は最初のデータの位置 or 日本中心など）
-    let map = L.map('map').setView([35.68, 139.76], 5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
+    for (const marker of markers) marker.remove();
+    markers.length = 0;
 
-    // 各データをリスト表示し、地図にマーカー追加
-    data.forEach(item => {
-      const loc = item.location || {};
-      const rearPhotos = item.rearPhotos || [];
-      const frontPhotos = item.frontPhotos || [];
+    for (const item of data) {
+      const { lat, lon } = item.location || {};
+      if (!lat || !lon) continue;
 
-      // リストHTML
-      const div = document.createElement("div");
-      div.className = "item";
+      const m = L.marker([lat, lon]).addTo(map);
+      markers.push(m);
 
-      div.innerHTML = `
-        <div><b>日時:</b> ${new Date(item.createdAt).toLocaleString()}</div>
-        <div><b>位置情報:</b> 緯度 ${loc.lat || "不明"} / 経度 ${loc.lon || "不明"}</div>
-        <div class="photos">
-          ${rearPhotos.map(src => `<img src="${src}" alt="rear photo">`).join('')}
-          ${frontPhotos.map(src => `<img src="${src}" alt="front photo">`).join('')}
-        </div>
-      `;
-      listEl.appendChild(div);
+      // 左クリック: 写真をオーバーレイ表示
+      m.on('click', () => {
+        const preview = document.getElementById('preview');
+        preview.innerHTML = '<button id="previewClose">✖</button>';
 
-      // 位置情報が有効なら地図にマーカー追加
-      if(loc.lat && loc.lon && !isNaN(loc.lat) && !isNaN(loc.lon)) {
-        L.marker([loc.lat, loc.lon]).addTo(map)
-          .bindPopup(`<b>${new Date(item.createdAt).toLocaleString()}</b><br>緯度:${loc.lat}<br>経度:${loc.lon}`);
-      }
-    });
+        const allPhotos = [...(item.rearPhotos || []), ...(item.frontPhotos || [])];
+        for (const p of allPhotos) {
+          const img = document.createElement('img');
+          img.src = p;
+          preview.appendChild(img);
+        }
+        preview.style.display = 'flex';
 
-    // 最初の位置にズーム
-    if(data.length > 0 && data[0].location && data[0].location.lat && data[0].location.lon) {
+        document.getElementById('previewClose').onclick = () => {
+          preview.style.display = 'none';
+        };
+      });
+
+      // 右クリック: 削除ボタン表示
+      m.on('contextmenu', (e) => {
+        const popup = L.popup()
+          .setLatLng(e.latlng)
+          .setContent(`<button class="delete-button">削除</button>`)
+          .openOn(map);
+
+        setTimeout(() => {
+          const btn = document.querySelector('.delete-button');
+          if (btn) {
+            btn.onclick = async () => {
+              if (confirm("この記録を削除しますか？")) {
+                await deleteDoc(doc(db, "photos_with_location", item.id));
+                loadData(); // 再読み込み
+              }
+            };
+          }
+        }, 0);
+      });
+    }
+
+    if (data.length > 0 && data[0].location?.lat) {
       map.setView([data[0].location.lat, data[0].location.lon], 13);
     }
-  };
+  }
+
+  window.onload = loadData;
 </script>
 </head>
 <body>
-  <h1>Firestore保存写真・位置情報一覧</h1>
-  <div id="list"></div>
-  <div id="map"></div>
+<div id="preview"></div>
+<div id="map"></div>
 </body>
 </html>
