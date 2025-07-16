@@ -452,37 +452,86 @@
 
   // 初期化
   window.onload = function() {
-    initializeElements();
-    initializeEventListeners();
-    initializeMap();
-    loadData();
+    console.log('アプリケーション開始');
+    try {
+      initializeElements();
+      initializeEventListeners();
+      initializeMap();
+      loadData();
+    } catch (error) {
+      console.error('初期化エラー:', error);
+      showError('初期化に失敗しました: ' + error.message);
+    }
   };
 
   function initializeElements() {
+    console.log('要素の初期化');
     elements.photoList = document.getElementById('photo-list');
     elements.photoPreview = document.getElementById('photo-preview');
     elements.previewContent = document.getElementById('preview-content');
     elements.modal = document.getElementById('delete-modal');
     elements.mapView = document.getElementById('map-view');
-    elements.previewView = document.getElementById('preview-view');
+    elements.previewView = document.getElementById('photo-preview'); // 修正
+    
+    // 要素の存在確認
+    Object.entries(elements).forEach(([key, element]) => {
+      if (!element) {
+        console.error(`要素が見つかりません: ${key}`);
+      } else {
+        console.log(`要素確認OK: ${key}`);
+      }
+    });
   }
 
   function initializeEventListeners() {
+    console.log('イベントリスナーの初期化');
+    
     // ビュー切り替え
-    document.getElementById('map-toggle').addEventListener('click', () => switchView('map'));
-    document.getElementById('preview-toggle').addEventListener('click', () => switchView('preview'));
+    const mapToggle = document.getElementById('map-toggle');
+    const previewToggle = document.getElementById('preview-toggle');
+    
+    if (mapToggle) {
+      mapToggle.addEventListener('click', () => switchView('map'));
+    } else {
+      console.error('map-toggle要素が見つかりません');
+    }
+    
+    if (previewToggle) {
+      previewToggle.addEventListener('click', () => switchView('preview'));
+    } else {
+      console.error('preview-toggle要素が見つかりません');
+    }
     
     // モーダル関連
-    document.getElementById('confirm-delete').addEventListener('click', confirmDelete);
-    document.getElementById('cancel-delete').addEventListener('click', closeModal);
-    document.getElementById('close-preview').addEventListener('click', closePreview);
+    const confirmDelete = document.getElementById('confirm-delete');
+    const cancelDelete = document.getElementById('cancel-delete');
+    
+    if (confirmDelete) {
+      confirmDelete.addEventListener('click', confirmDeleteHandler);
+    } else {
+      console.error('confirm-delete要素が見つかりません');
+    }
+    
+    if (cancelDelete) {
+      cancelDelete.addEventListener('click', closeModal);
+    } else {
+      console.error('cancel-delete要素が見つかりません');
+    }
+    
+    console.log('イベントリスナー初期化完了');
   }
 
   function initializeMap() {
-    map = L.map('map').setView([35.68, 139.76], 5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
+    console.log('マップの初期化');
+    try {
+      map = L.map('map').setView([35.68, 139.76], 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+      console.log('マップ初期化完了');
+    } catch (error) {
+      console.error('マップ初期化エラー:', error);
+    }
   }
 
   function switchView(view) {
@@ -493,8 +542,12 @@
     document.getElementById('preview-toggle').classList.toggle('active', view === 'preview');
     
     // ビューの表示/非表示
-    elements.mapView.classList.toggle('hidden', view !== 'map');
-    elements.previewView.classList.toggle('hidden', view !== 'preview');
+    if (elements.mapView) {
+      elements.mapView.classList.toggle('hidden', view !== 'map');
+    }
+    if (elements.previewView) {
+      elements.previewView.classList.toggle('hidden', view !== 'preview');
+    }
     
     // マップのリサイズ
     if (view === 'map' && map) {
@@ -503,21 +556,34 @@
   }
 
   async function loadData() {
+    console.log('データ読み込み開始');
     showLoading();
     
     try {
+      console.log('Firestore接続中...');
       const q = query(collection(db, "photos_with_location"), orderBy("createdAt", "desc"));
       const snapshot = await getDocs(q);
+      
+      console.log('データ取得完了:', snapshot.size, '件');
+      
       allData = snapshot.docs.map(docSnap => ({
         id: docSnap.id,
         ...docSnap.data()
       }));
 
+      console.log('データ:', allData);
+
+      if (allData.length === 0) {
+        elements.photoList.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">データがありません</div>';
+        return;
+      }
+
       renderPhotoList();
       renderMapMarkers();
+      
     } catch (error) {
-      console.error('データの読み込みに失敗しました:', error);
-      showError('データの読み込みに失敗しました');
+      console.error('データの読み込みエラー:', error);
+      showError('データの読み込みに失敗しました: ' + error.message);
     }
   }
 
@@ -526,7 +592,10 @@
   }
 
   function showError(message) {
-    elements.photoList.innerHTML = `<div style="text-align: center; color: #ff6b6b; padding: 20px;">${message}</div>`;
+    console.error('エラー表示:', message);
+    if (elements.photoList) {
+      elements.photoList.innerHTML = `<div style="text-align: center; color: #ff6b6b; padding: 20px; background: #fff; border-radius: 8px; margin: 10px;">${message}<br><br><small>ブラウザのコンソールで詳細を確認してください</small></div>`;
+    }
   }
 
   function renderPhotoList() {
@@ -720,7 +789,7 @@
     deleteTargetId = null;
   }
 
-  async function confirmDelete() {
+  async function confirmDeleteHandler() {
     if (!deleteTargetId) return;
     
     try {
@@ -743,7 +812,7 @@
   // グローバルに関数を公開
   window.closePreview = closePreview;
   window.closeModal = closeModal;
-  window.confirmDelete = confirmDelete;
+  window.confirmDelete = confirmDeleteHandler;
 </script>
 </head>
 <body>
@@ -776,7 +845,7 @@
         </div>
 
         <!-- プレビュービュー -->
-        <div id="preview-view" class="photo-preview hidden">
+        <div id="photo-preview" class="photo-preview hidden">
           <div class="preview-header">
             <h2>📷 写真プレビュー</h2>
             <button onclick="closePreview()" style="position: absolute; right: 15px; top: 15px; background: none; border: none; color: white; font-size: 20px; cursor: pointer;">×</button>
