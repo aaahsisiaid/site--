@@ -1,143 +1,139 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>📍 Firestore 地図 & 削除 + 写真プレビュー</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Firestore 写真＋位置情報＋マップ表示＋削除＋オーバーレイ</title>
 <style>
-  body { margin: 0; font-family: sans-serif; }
-  #map { height: 100vh; width: 100vw; }
-  #preview {
-    position: absolute;
-    top: 0; left: 0;
-    width: 66.6vw;
-    height: 100vh;
-    background: rgba(0,0,0,0.9);
-    color: white;
-    display: none;
-    flex-wrap: wrap;
-    align-content: flex-start;
-    overflow-y: auto;
-    z-index: 999;
-    padding: 10px;
+  body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+  #list { max-height: 300px; overflow-y: auto; background: #eee; padding: 10px; }
+  .item { border-bottom: 1px solid #ccc; padding: 10px; position: relative; }
+  .photos img { max-width: 100px; margin-right: 5px; }
+  .delete-btn {
+    position: absolute; top: 10px; right: 10px;
+    background: red; color: white; border: none; padding: 4px 8px;
+    cursor: pointer; font-size: 12px; border-radius: 4px; display: none;
   }
-  #preview img {
-    max-width: calc(50% - 10px);
-    margin: 5px;
-    border: 2px solid #fff;
+  #map { height: 400px; width: 100%; position: relative; }
+  #overlay {
+    position: absolute; top: 0; left: 0;
+    width: 33.33%; height: 100%;
+    background: rgba(0,0,0,0.8);
+    display: none; flex-direction: column; align-items: center;
+    overflow-y: auto; z-index: 1000; padding: 10px;
   }
-  #previewClose {
-    position: absolute;
-    top: 5px; right: 10px;
-    color: white;
-    font-size: 18px;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-  }
-  .delete-button {
-    background: red;
-    color: white;
-    font-size: 12px;
-    border: none;
-    padding: 2px 6px;
-    border-radius: 4px;
-    cursor: pointer;
+  #overlay img {
+    max-width: 90%; margin: 10px 0; border: 2px solid #fff;
   }
 </style>
+
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
 <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
-  import {
-    getFirestore, collection, query, orderBy, getDocs, deleteDoc, doc
-  } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import {
+  getFirestore, collection, query, orderBy, getDocs, deleteDoc, doc
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyDgwbExA5BKTcKsq2Ov8z173Ke6EPYGf28",
-    authDomain: "picture-storage-906ae.firebaseapp.com",
-    projectId: "picture-storage-906ae",
-    storageBucket: "picture-storage-906ae.firebasestorage.app",
-    messagingSenderId: "134265329367",
-    appId: "1:134265329367:web:b94063426b6307f8a8c292",
-    measurementId: "G-9CP3F27EMF"
-  };
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
+const firebaseConfig = {
+  apiKey: "AIzaSyDgwbExA5BKTcKsq2Ov8z173Ke6EPYGf28",
+  authDomain: "picture-storage-906ae.firebaseapp.com",
+  projectId: "picture-storage-906ae",
+  storageBucket: "picture-storage-906ae.firebasestorage.app",
+  messagingSenderId: "134265329367",
+  appId: "1:134265329367:web:b94063426b6307f8a8c292",
+  measurementId: "G-9CP3F27EMF"
+};
 
-  let map;
-  const markers = [];
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+let map;
+let markers = [];
+const overlay = document.getElementById("overlay");
 
-  async function loadData() {
-    const snapshot = await getDocs(query(collection(db, "photos_with_location"), orderBy("createdAt", "desc")));
-    const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+async function loadData() {
+  const listEl = document.getElementById("list");
+  listEl.innerHTML = "";
 
-    if (!map) {
-      map = L.map('map').setView([35.68, 139.76], 5);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-      }).addTo(map);
-    }
+  const q = query(collection(db, "photos_with_location"), orderBy("createdAt", "asc"));
+  const snapshot = await getDocs(q);
+  const data = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
 
-    for (const marker of markers) marker.remove();
-    markers.length = 0;
-
-    for (const item of data) {
-      const { lat, lon } = item.location || {};
-      if (!lat || !lon) continue;
-
-      const m = L.marker([lat, lon]).addTo(map);
-      markers.push(m);
-
-      // 左クリック: 写真をオーバーレイ表示
-      m.on('click', () => {
-        const preview = document.getElementById('preview');
-        preview.innerHTML = '<button id="previewClose">✖</button>';
-
-        const allPhotos = [...(item.rearPhotos || []), ...(item.frontPhotos || [])];
-        for (const p of allPhotos) {
-          const img = document.createElement('img');
-          img.src = p;
-          preview.appendChild(img);
-        }
-        preview.style.display = 'flex';
-
-        document.getElementById('previewClose').onclick = () => {
-          preview.style.display = 'none';
-        };
-      });
-
-      // 右クリック: 削除ボタン表示
-      m.on('contextmenu', (e) => {
-        const popup = L.popup()
-          .setLatLng(e.latlng)
-          .setContent(`<button class="delete-button">削除</button>`)
-          .openOn(map);
-
-        setTimeout(() => {
-          const btn = document.querySelector('.delete-button');
-          if (btn) {
-            btn.onclick = async () => {
-              if (confirm("この記録を削除しますか？")) {
-                await deleteDoc(doc(db, "photos_with_location", item.id));
-                loadData(); // 再読み込み
-              }
-            };
-          }
-        }, 0);
-      });
-    }
-
-    if (data.length > 0 && data[0].location?.lat) {
-      map.setView([data[0].location.lat, data[0].location.lon], 13);
-    }
+  if (!map) {
+    map = L.map('map').setView([35.68, 139.76], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
   }
 
-  window.onload = loadData;
+  markers.forEach(m => m.remove());
+  markers = [];
+
+  data.forEach(item => {
+    const loc = item.location || {};
+    const rearPhotos = item.rearPhotos || [];
+    const frontPhotos = item.frontPhotos || [];
+    const created = new Date(item.createdAt).toLocaleString();
+
+    const div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML = `
+      <button class="delete-btn">削除</button>
+      <div><b>日時:</b> ${created}</div>
+      <div><b>位置:</b> 緯度 ${loc.lat || "不明"} / 経度 ${loc.lon || "不明"}</div>
+      <div class="photos">
+        ${rearPhotos.map(src => `<img src="${src}" alt="rear">`).join('')}
+        ${frontPhotos.map(src => `<img src="${src}" alt="front">`).join('')}
+      </div>
+    `;
+
+    const deleteBtn = div.querySelector(".delete-btn");
+    div.oncontextmenu = (e) => {
+      e.preventDefault();
+      deleteBtn.style.display = 'block';
+    };
+    deleteBtn.onclick = async () => {
+      if (confirm("この記録を削除しますか？")) {
+        await deleteDoc(doc(db, "photos_with_location", item.id));
+        loadData();
+      }
+    };
+
+    listEl.appendChild(div);
+
+    if (loc.lat && loc.lon && !isNaN(loc.lat) && !isNaN(loc.lon)) {
+      const marker = L.marker([loc.lat, loc.lon]).addTo(map);
+      marker.bindPopup(`<b>${created}</b><br>緯度:${loc.lat}<br>経度:${loc.lon}`);
+      marker.on('click', () => {
+        showOverlay([...rearPhotos, ...frontPhotos]);
+      });
+      markers.push(marker);
+    }
+  });
+}
+
+function showOverlay(images) {
+  overlay.innerHTML = "";
+  images.forEach(src => {
+    const img = document.createElement("img");
+    img.src = src;
+    overlay.appendChild(img);
+  });
+  overlay.style.display = "flex";
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  loadData();
+  overlay.onclick = () => overlay.style.display = "none";
+});
 </script>
 </head>
 <body>
-<div id="preview"></div>
-<div id="map"></div>
+  <h1>📍 Firestore 写真＋位置情報＋削除＋マップ表示</h1>
+  <div id="list"></div>
+  <div id="map">
+    <div id="overlay"></div>
+  </div>
 </body>
 </html>
